@@ -6299,9 +6299,9 @@ dependencies = [
 
 [[package]]
 name = "qlean"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "470f73af2bd5ec2ad1ea20d6ff1f0062fccfb8f0a75afa30deccad6b0da718d3"
+checksum = "29348473f9420b83082acbec4f5fb866e201c9c358ef1a5b5364e3fc0be510dc"
 dependencies = [
  "anyhow",
  "console",
