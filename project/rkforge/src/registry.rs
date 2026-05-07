@@ -6,7 +6,7 @@ use oci_client::client::{ClientConfig, ClientProtocol};
 use oci_client::secrets::RegistryAuth;
 use oci_spec::distribution::Reference;
 use reqwest::Url;
-use std::net::Ipv6Addr;
+use std::net::{IpAddr, Ipv6Addr};
 use tracing::warn;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -97,10 +97,29 @@ pub fn scheme_for_registry(
     registry: impl AsRef<str>,
     insecure_registries: &[String],
 ) -> RegistryScheme {
-    if is_insecure_registry(registry, insecure_registries) {
+    let registry = registry.as_ref();
+    if is_insecure_registry(registry, insecure_registries) || is_local_or_private_registry(registry)
+    {
         RegistryScheme::Http
     } else {
         RegistryScheme::Https
+    }
+}
+
+fn is_local_or_private_registry(registry: &str) -> bool {
+    let registry = registry.trim();
+    let host = if let Some(stripped) = registry.strip_prefix('[') {
+        stripped.split(']').next().unwrap_or(stripped)
+    } else {
+        registry.split(':').next().unwrap_or(registry)
+    };
+    if matches!(host, "localhost" | "0.0.0.0") {
+        return true;
+    }
+    match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => ip.is_loopback() || ip.is_private(),
+        Ok(IpAddr::V6(ip)) => ip.is_loopback() || ip.is_unique_local(),
+        Err(_) => false,
     }
 }
 
@@ -160,7 +179,7 @@ pub fn resolve_client_ref_auth(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_registry_host;
+    use super::{RegistryScheme, parse_registry_host, scheme_for_registry};
 
     #[test]
     fn parse_registry_host_rejects_scheme() {
@@ -198,5 +217,22 @@ mod tests {
     fn parse_registry_host_rejects_empty_or_port_only() {
         assert!(parse_registry_host("").is_err());
         assert!(parse_registry_host(":5000").is_err());
+    }
+
+    #[test]
+    fn local_and_private_registries_default_to_http() {
+        assert_eq!(
+            scheme_for_registry("127.0.0.1:8968", &[]),
+            RegistryScheme::Http
+        );
+        assert_eq!(scheme_for_registry("[::1]:5000", &[]), RegistryScheme::Http);
+        assert_eq!(
+            scheme_for_registry("192.168.1.10:5000", &[]),
+            RegistryScheme::Http
+        );
+        assert_eq!(
+            scheme_for_registry("registry.example.com", &[]),
+            RegistryScheme::Https
+        );
     }
 }

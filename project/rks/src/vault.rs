@@ -283,6 +283,7 @@ impl Vault {
     /// Path: `secret/registry/{registry_host}`
     ///
     /// The `registry` value is expected to be pre-normalized (lowercased, host:port only).
+    #[allow(dead_code)]
     pub async fn store_registry_credential(&self, registry: &str, pat: &str) -> anyhow::Result<()> {
         let path = format!("secret/registry/{registry}");
         let data = json!({ "pat": pat, "registry": registry });
@@ -295,6 +296,7 @@ impl Vault {
     }
 
     /// Remove a stored registry credential.
+    #[allow(dead_code)]
     pub async fn delete_registry_credential(&self, registry: &str) -> anyhow::Result<()> {
         let path = format!("secret/registry/{registry}");
         self.vault
@@ -755,17 +757,17 @@ mod tests {
         let (vault, _dir) = setup_test_vault().await.unwrap();
 
         vault
-            .store_registry_credential("libra.tools", "test-token-123")
+            .store_registry_credential("127.0.0.1:8968", "test-token-123")
             .await
             .unwrap();
 
         let cred = vault
-            .get_registry_credential("libra.tools")
+            .get_registry_credential("127.0.0.1:8968")
             .await
             .unwrap()
             .expect("credential should exist");
 
-        assert_eq!(cred.registry, "libra.tools");
+        assert_eq!(cred.registry, "127.0.0.1:8968");
         assert_eq!(cred.pat, "test-token-123");
     }
 
@@ -774,7 +776,7 @@ mod tests {
         let (vault, _dir) = setup_test_vault().await.unwrap();
 
         vault
-            .store_registry_credential("libra.tools", "token1")
+            .store_registry_credential("127.0.0.1:8968", "token1")
             .await
             .unwrap();
         vault
@@ -786,7 +788,7 @@ mod tests {
         assert_eq!(creds.len(), 2);
 
         let registries: Vec<&str> = creds.iter().map(|c| c.registry.as_str()).collect();
-        assert!(registries.contains(&"libra.tools"));
+        assert!(registries.contains(&"127.0.0.1:8968"));
         assert!(registries.contains(&"other.registry.io"));
     }
 
@@ -795,16 +797,19 @@ mod tests {
         let (vault, _dir) = setup_test_vault().await.unwrap();
 
         vault
-            .store_registry_credential("libra.tools", "token")
+            .store_registry_credential("127.0.0.1:8968", "token")
             .await
             .unwrap();
 
         vault
-            .delete_registry_credential("libra.tools")
+            .delete_registry_credential("127.0.0.1:8968")
             .await
             .unwrap();
 
-        let cred = vault.get_registry_credential("libra.tools").await.unwrap();
+        let cred = vault
+            .get_registry_credential("127.0.0.1:8968")
+            .await
+            .unwrap();
         assert!(cred.is_none(), "credential should be deleted");
     }
 
@@ -821,16 +826,16 @@ mod tests {
         let (vault, _dir) = setup_test_vault().await.unwrap();
 
         vault
-            .store_registry_credential("libra.tools", "old-token")
+            .store_registry_credential("127.0.0.1:8968", "old-token")
             .await
             .unwrap();
         vault
-            .store_registry_credential("libra.tools", "new-token")
+            .store_registry_credential("127.0.0.1:8968", "new-token")
             .await
             .unwrap();
 
         let cred = vault
-            .get_registry_credential("libra.tools")
+            .get_registry_credential("127.0.0.1:8968")
             .await
             .unwrap()
             .expect("credential should exist");
@@ -845,19 +850,19 @@ mod tests {
         let (mut vault, _dir) = setup_test_vault().await.unwrap();
 
         vault
-            .store_registry_credential("libra.tools", "token")
+            .store_registry_credential("127.0.0.1:8968", "token")
             .await
             .unwrap();
 
         vault.root_token = "bad-token".to_string();
 
         let err = vault
-            .get_registry_credential("libra.tools")
+            .get_registry_credential("127.0.0.1:8968")
             .await
             .unwrap_err();
         assert!(
             err.to_string()
-                .contains("failed to read registry credential at 'secret/registry/libra.tools'"),
+                .contains("failed to read registry credential at 'secret/registry/127.0.0.1:8968'"),
             "unexpected error: {err}"
         );
     }
@@ -867,7 +872,7 @@ mod tests {
         let (vault, _dir) = setup_test_vault().await.unwrap();
 
         vault
-            .store_registry_credential("libra.tools", "token")
+            .store_registry_credential("127.0.0.1:8968", "token")
             .await
             .unwrap();
 
@@ -891,7 +896,7 @@ mod tests {
             1,
             "should skip the invalid entry and return only the valid one"
         );
-        assert_eq!(creds[0].registry, "libra.tools");
+        assert_eq!(creds[0].registry, "127.0.0.1:8968");
     }
 
     fn issue_test_cert(

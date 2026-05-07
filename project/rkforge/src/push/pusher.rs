@@ -58,22 +58,23 @@ impl Pusher {
             .map(|e| async move { (e.task.await, e.digest) })
             .collect::<FuturesUnordered<_>>();
 
-        let mut has_error = false;
+        let mut errors = Vec::new();
         while let Some((result, digest)) = stream.next().await {
             let pb = bars[&digest].clone();
             match result {
                 Ok(_) => pb.finish_with_message("pushed"),
                 Err(e) => {
-                    pb.finish_with_message(format!("failed: {}", format_push_error(&e)?));
-                    has_error = true;
+                    let message = format_push_error(&e)?;
+                    pb.finish_with_message(format!("failed: {message}"));
+                    errors.push(format!("{digest}: {message}"));
                 }
             }
         }
 
-        if !has_error {
+        if errors.is_empty() {
             Ok(())
         } else {
-            anyhow::bail!("could not to push due to previous error")
+            anyhow::bail!("could not push:\n{}", errors.join("\n"))
         }
     }
 }
@@ -92,6 +93,10 @@ fn format_push_error(e: &anyhow::Error) -> anyhow::Result<String> {
                 })
         }
         Some(other) => Ok(other.to_string()),
-        None => Ok(e.to_string()),
+        None => Ok(e
+            .chain()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(": ")),
     }
 }

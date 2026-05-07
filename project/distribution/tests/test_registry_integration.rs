@@ -160,9 +160,8 @@ POSTGRES_PASSWORD={}
 POSTGRES_DB={}
 JWT_SECRET=secret
 JWT_LIFETIME_SECONDS=3600
-RUST_LOG=info
-GITHUB_CLIENT_ID=test_client_id
-GITHUB_CLIENT_SECRET=test_client_secret"#,
+OCI_REGISTRY_DEFAULT_USER=admin
+RUST_LOG=info"#,
         REGISTRY_PORT, REGISTRY_HOST, REGISTRY_PORT, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
     );
 
@@ -224,127 +223,34 @@ exec /usr/local/bin/distribution
     Ok(())
 }
 
-/// Get auth token for a user
-async fn get_auth_token(vm: &mut Machine, username: &str, password: &str) -> Result<String> {
-    let auth_url = format!("http://{}:{}/auth/token", REGISTRY_HOST, REGISTRY_PORT);
-    let output = exec_check(
-        vm,
-        &format!(
-            "curl -sf -u '{}:{}' '{}' | jq -r .token",
-            username, password, auth_url
-        ),
-    )
-    .await?;
-    Ok(output.trim().to_string())
-}
-
-/// Register a new user (debug endpoint)
-async fn register_user(vm: &mut Machine, username: &str, password: &str) -> Result<()> {
-    let debug_url = format!("http://{}:{}/debug/users", REGISTRY_HOST, REGISTRY_PORT);
-    exec_check(
-        vm,
-        &format!(
-            r#"curl -sf -X POST -H "Content-Type: application/json" -d '{{"username": "{}", "password": "{}"}}' '{}'"#,
-            username, password, debug_url
-        ),
-    ).await?;
-    Ok(())
-}
-
 /// Test anonymous user permissions
 async fn test_anonymous_user(vm: &mut Machine) -> Result<()> {
-    tracing::info!("--- Running Test Case 1: Anonymous User Permissions ---");
+    tracing::info!("--- Running Test Case 1: No-Auth Admin Push Permissions ---");
 
     let api_url = format!("http://{}:{}", REGISTRY_HOST, REGISTRY_PORT);
 
-    // Get anonymous token
-    let anon_token = exec_check(
-        vm,
-        &format!("curl -sf '{}/auth/token' | jq -r .token", api_url),
-    )
-    .await?;
-    let anon_token = anon_token.trim();
-
-    // Try to initiate a blob upload as anonymous (should fail with 401 or 403)
-    tracing::info!("Attempting to start blob upload as anonymous user (should fail)...");
-    let result = vm.exec(&format!(
-        r#"curl -s -w "%{{http_code}}" -o /dev/null -X POST -H "Authorization: Bearer {}" '{}/v2/anonymous/test/blobs/uploads/'"#,
-        anon_token, api_url
-    )).await?;
+    tracing::info!("Attempting to start blob upload without credentials...");
+    let result = vm
+        .exec(&format!(
+            r#"curl -s -w "%{{http_code}}" -o /dev/null -X POST '{}/v2/admin/test/blobs/uploads/'"#,
+            api_url
+        ))
+        .await?;
 
     let status_code = String::from_utf8_lossy(&result.stdout).trim().to_string();
-    tracing::info!("Anonymous push attempt returned status: {}", status_code);
-
-    // Anonymous users should not be able to push (expect 401 or 403)
-    if status_code == "202" || status_code == "200" {
-        anyhow::bail!("SECURITY RISK: Anonymous user was able to initiate blob upload!");
-    }
-
-    tracing::info!("[SUCCESS] Anonymous user correctly denied push access.");
-    Ok(())
-}
-
-/// Test cross-namespace push permissions
-async fn test_cross_namespace_push(
-    vm: &mut Machine,
-    user_a: &str,
-    pass_a: &str,
-    user_b: &str,
-    _pass_b: &str,
-) -> Result<()> {
-    tracing::info!("--- Running Test Case 2: Cross-Namespace Push Permissions ---");
-
-    let api_url = format!("http://{}:{}", REGISTRY_HOST, REGISTRY_PORT);
-
-    // Get token for User A
-    let token_a = get_auth_token(vm, user_a, pass_a).await?;
-
-    // User A tries to initiate blob upload in their own namespace (should succeed)
-    tracing::info!("User A attempting to push to their own namespace...");
-    let result = vm.exec(&format!(
-        r#"curl -s -w "%{{http_code}}" -o /dev/null -X POST -H "Authorization: Bearer {}" '{}/v2/{}/test-image/blobs/uploads/'"#,
-        token_a, api_url, user_a
-    )).await?;
-
-    let status_code = String::from_utf8_lossy(&result.stdout).trim().to_string();
-    tracing::info!(
-        "User A push to own namespace returned status: {}",
-        status_code
-    );
+    tracing::info!("No-auth push attempt returned status: {}", status_code);
 
     if status_code != "202" {
-        anyhow::bail!(
-            "User A failed to initiate blob upload to their own namespace (status: {})",
-            status_code
-        );
-    }
-    tracing::info!("[SUCCESS] User A successfully initiated upload to their own namespace.");
-
-    // User A tries to initiate blob upload in User B's namespace (should fail)
-    tracing::info!("User A attempting to push to User B's namespace (should fail)...");
-    let result = vm.exec(&format!(
-        r#"curl -s -w "%{{http_code}}" -o /dev/null -X POST -H "Authorization: Bearer {}" '{}/v2/{}/illegal-push/blobs/uploads/'"#,
-        token_a, api_url, user_b
-    )).await?;
-
-    let status_code = String::from_utf8_lossy(&result.stdout).trim().to_string();
-    tracing::info!(
-        "User A push to User B namespace returned status: {}",
-        status_code
-    );
-
-    if status_code == "202" || status_code == "200" {
-        anyhow::bail!("SECURITY RISK: User A was able to push to User B's namespace!");
+        anyhow::bail!("No-auth registry failed to initiate blob upload (status: {status_code})");
     }
 
-    tracing::info!("[SUCCESS] User A correctly denied push access to User B's namespace.");
+    tracing::info!("[SUCCESS] No-auth registry accepted anonymous push.");
     Ok(())
 }
 
 /// Push a minimal blob and manifest to create a repository
 async fn push_minimal_image(
     vm: &mut Machine,
-    token: &str,
     namespace: &str,
     repo: &str,
     tag: &str,
@@ -367,8 +273,8 @@ async fn push_minimal_image(
     let location = exec_check(
         vm,
         &format!(
-            r#"curl -s -D - -X POST -H "Authorization: Bearer {}" '{}/v2/{}/{}/blobs/uploads/' | grep -i '^location:' | tr -d '\r' | cut -d' ' -f2"#,
-            token, api_url, namespace, repo
+            r#"curl -s -D - -X POST '{}/v2/{}/{}/blobs/uploads/' | grep -i '^location:' | tr -d '\r' | cut -d' ' -f2"#,
+            api_url, namespace, repo
         ),
     ).await?;
     let location = location.trim();
@@ -391,8 +297,8 @@ async fn push_minimal_image(
     exec_check(
         vm,
         &format!(
-            r#"curl -sf -X PUT -H "Authorization: Bearer {}" -H "Content-Type: application/octet-stream" --data-binary @/tmp/repo_blob '{}'"#,
-            token, upload_url
+            r#"curl -sf -X PUT -H "Content-Type: application/octet-stream" --data-binary @/tmp/repo_blob '{}'"#,
+            upload_url
         ),
     ).await?;
 
@@ -418,8 +324,8 @@ async fn push_minimal_image(
     let manifest_digest = exec_check(
         vm,
         &format!(
-            r#"curl -s -D - -o /dev/null -X PUT -H "Authorization: Bearer {}" -H "Content-Type: application/vnd.docker.distribution.manifest.v2+json" -d '{}' '{}/v2/{}/{}/manifests/{}' | grep -i '^Docker-Content-Digest:' | tr -d '\r' | cut -d' ' -f2"#,
-            token, manifest, api_url, namespace, repo, tag
+            r#"curl -s -D - -o /dev/null -X PUT -H "Content-Type: application/vnd.docker.distribution.manifest.v2+json" -d '{}' '{}/v2/{}/{}/manifests/{}' | grep -i '^Docker-Content-Digest:' | tr -d '\r' | cut -d' ' -f2"#,
+            manifest, api_url, namespace, repo, tag
         ),
     )
     .await?;
@@ -428,16 +334,9 @@ async fn push_minimal_image(
     Ok(manifest_digest.trim().to_string())
 }
 
-async fn get_visible_repos(vm: &mut Machine, token: &str) -> Result<Value> {
+async fn get_visible_repos(vm: &mut Machine) -> Result<Value> {
     let api_url = format!("http://{}:{}/api/v1/repo", REGISTRY_HOST, REGISTRY_PORT);
-    let output = exec_check(
-        vm,
-        &format!(
-            r#"curl -sf -H "Authorization: Bearer {}" '{}'"#,
-            token, api_url
-        ),
-    )
-    .await?;
+    let output = exec_check(vm, &format!(r#"curl -sf '{}'"#, api_url)).await?;
     serde_json::from_str(&output).context("Failed to parse repo list JSON")
 }
 
@@ -464,26 +363,25 @@ fn repo_tags(repo: &Value) -> Vec<String> {
         .unwrap_or_default()
 }
 
-async fn test_repo_list_metadata(vm: &mut Machine, user: &str, pass: &str) -> Result<()> {
+async fn test_repo_list_metadata(vm: &mut Machine, user: &str) -> Result<()> {
     tracing::info!("--- Running Test Case 4: Repo List Metadata ---");
 
     let api_url = format!("http://{}:{}", REGISTRY_HOST, REGISTRY_PORT);
-    let token = get_auth_token(vm, user, pass).await?;
     let latest_repo = "repo-list-latest";
     let recent_repo = "repo-list-recent";
 
-    let _ = push_minimal_image(vm, &token, user, latest_repo, "v1").await?;
+    let _ = push_minimal_image(vm, user, latest_repo, "v1").await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
-    let _ = push_minimal_image(vm, &token, user, latest_repo, "latest").await?;
+    let _ = push_minimal_image(vm, user, latest_repo, "latest").await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
-    let latest_digest = push_minimal_image(vm, &token, user, latest_repo, "v2").await?;
+    let latest_digest = push_minimal_image(vm, user, latest_repo, "v2").await?;
 
     tokio::time::sleep(Duration::from_secs(1)).await;
-    let _ = push_minimal_image(vm, &token, user, recent_repo, "v1").await?;
+    let _ = push_minimal_image(vm, user, recent_repo, "v1").await?;
     tokio::time::sleep(Duration::from_secs(1)).await;
-    let _ = push_minimal_image(vm, &token, user, recent_repo, "v2").await?;
+    let _ = push_minimal_image(vm, user, recent_repo, "v2").await?;
 
-    let repos = get_visible_repos(vm, &token).await?;
+    let repos = get_visible_repos(vm).await?;
 
     let latest_entry = repo_entry(&repos, user, latest_repo)?;
     assert_eq!(
@@ -513,13 +411,13 @@ async fn test_repo_list_metadata(vm: &mut Machine, user: &str, pass: &str) -> Re
     exec_check(
         vm,
         &format!(
-            r#"curl -sf -X DELETE -H "Authorization: Bearer {}" '{}/v2/{}/{}/manifests/v1'"#,
-            token, api_url, user, recent_repo
+            r#"curl -sf -X DELETE '{}/v2/{}/{}/manifests/v1'"#,
+            api_url, user, recent_repo
         ),
     )
     .await?;
 
-    let repos = get_visible_repos(vm, &token).await?;
+    let repos = get_visible_repos(vm).await?;
     let recent_entry = repo_entry(&repos, user, recent_repo)?;
     assert_eq!(repo_tags(recent_entry), vec!["v2".to_string()]);
     assert_eq!(recent_entry["size_tag"].as_str(), Some("v2"));
@@ -532,13 +430,13 @@ async fn test_repo_list_metadata(vm: &mut Machine, user: &str, pass: &str) -> Re
     exec_check(
         vm,
         &format!(
-            r#"curl -sf -X DELETE -H "Authorization: Bearer {}" '{}/v2/{}/{}/manifests/{}'"#,
-            token, api_url, user, latest_repo, latest_digest
+            r#"curl -sf -X DELETE '{}/v2/{}/{}/manifests/{}'"#,
+            api_url, user, latest_repo, latest_digest
         ),
     )
     .await?;
 
-    let repos = get_visible_repos(vm, &token).await?;
+    let repos = get_visible_repos(vm).await?;
     let latest_entry = repo_entry(&repos, user, latest_repo)?;
     assert_eq!(repo_tags(latest_entry), Vec::<String>::new());
     assert!(latest_entry["size_tag"].is_null());
@@ -548,81 +446,7 @@ async fn test_repo_list_metadata(vm: &mut Machine, user: &str, pass: &str) -> Re
     Ok(())
 }
 
-/// Test private/public pull permissions
-async fn test_visibility_permissions(
-    vm: &mut Machine,
-    user_a: &str,
-    pass_a: &str,
-    user_b: &str,
-    pass_b: &str,
-) -> Result<()> {
-    tracing::info!("--- Running Test Case 3: Private/Public Pull Permissions ---");
-
-    let api_url = format!("http://{}:{}", REGISTRY_HOST, REGISTRY_PORT);
-
-    // Get tokens
-    let token_b = get_auth_token(vm, user_b, pass_b).await?;
-    let token_a = get_auth_token(vm, user_a, pass_a).await?;
-
-    // User B creates a private repository
-    tracing::info!("User B creating private repository...");
-    let _ = push_minimal_image(vm, &token_b, user_b, "private-repo", "v1").await?;
-
-    // User B creates a public repository
-    tracing::info!("User B creating public repository...");
-    let _ = push_minimal_image(vm, &token_b, user_b, "public-repo", "v1").await?;
-
-    // Set public-repo to public
-    tracing::info!("User B setting repository to public...");
-    exec_check(
-        vm,
-        &format!(
-            r#"curl -sf -X PUT -H "Authorization: Bearer {}" -H "Content-Type: application/json" -d '{{"visibility": "public"}}' '{}/api/v1/{}/public-repo/visibility'"#,
-            token_b, api_url, user_b
-        ),
-    ).await?;
-
-    // User A tries to pull User B's private repo (should fail)
-    tracing::info!("User A attempting to pull User B's private repo (should fail)...");
-    let result = vm.exec(&format!(
-        r#"curl -s -w "%{{http_code}}" -o /dev/null -H "Authorization: Bearer {}" '{}/v2/{}/private-repo/manifests/v1'"#,
-        token_a, api_url, user_b
-    )).await?;
-
-    let status_code = String::from_utf8_lossy(&result.stdout).trim().to_string();
-    tracing::info!("User A pull private repo returned status: {}", status_code);
-
-    if status_code == "200" {
-        anyhow::bail!("SECURITY RISK: User A was able to pull User B's private repo!");
-    }
-    tracing::info!("[SUCCESS] User A correctly denied access to User B's private repo.");
-
-    // User A tries to pull User B's public repo (should succeed)
-    tracing::info!("User A attempting to pull User B's public repo...");
-    let result = vm.exec(&format!(
-        r#"curl -s -w "%{{http_code}}" -o /dev/null -H "Authorization: Bearer {}" '{}/v2/{}/public-repo/manifests/v1'"#,
-        token_a, api_url, user_b
-    )).await?;
-
-    let status_code = String::from_utf8_lossy(&result.stdout).trim().to_string();
-    tracing::info!("User A pull public repo returned status: {}", status_code);
-
-    if status_code != "200" {
-        anyhow::bail!(
-            "User A failed to pull User B's public repo (status: {})",
-            status_code
-        );
-    }
-    tracing::info!("[SUCCESS] User A successfully pulled User B's public repo.");
-
-    Ok(())
-}
-
-/// Get the path to the distribution binary (debug build only)
-///
-/// Note: Only debug builds are supported because the /debug/users route
-/// (used for user registration in tests) is only available when compiled
-/// with debug_assertions enabled.
+/// Get the path to the distribution binary.
 fn get_distribution_binary_path() -> Result<PathBuf> {
     // First, try CARGO_BIN_EXE_distribution which Cargo sets for integration tests
     if let Ok(path) = std::env::var("CARGO_BIN_EXE_distribution") {
@@ -644,19 +468,21 @@ fn get_distribution_binary_path() -> Result<PathBuf> {
                 .join("target")
         });
 
-    // Only use debug build because /debug/users route is only available in debug mode
     let debug_path = target_dir.join("debug/distribution");
-
     if debug_path.exists() {
         return Ok(debug_path);
     }
 
+    let release_path = target_dir.join("release/distribution");
+    if release_path.exists() {
+        return Ok(release_path);
+    }
+
     anyhow::bail!(
-        "Distribution debug binary not found at {:?}. \
-        Please build it with 'cargo build -p distribution'. \
-        Note: Release builds are not supported because the /debug/users route \
-        is only available in debug mode.",
-        debug_path
+        "Distribution binary not found at {:?} or {:?}. \
+        Please build it with 'cargo build -p distribution'.",
+        debug_path,
+        release_path
     );
 }
 
@@ -697,28 +523,9 @@ async fn test_registry_integration() -> Result<()> {
             // Setup and start distribution
             setup_distribution(vm, &binary_path).await?;
 
-            // Generate test users
-            let timestamp = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-            let user_a = format!("usera-{}", timestamp);
-            let user_b = format!("userb-{}", timestamp);
-            let pass_a = "passwordA";
-            let pass_b = "passwordB";
-
-            // Register users
-            tracing::info!("Registering test users...");
-            register_user(vm, &user_a, pass_a).await?;
-            tracing::info!("Registered user: {}", user_a);
-            register_user(vm, &user_b, pass_b).await?;
-            tracing::info!("Registered user: {}", user_b);
-
             // Run test cases
             test_anonymous_user(vm).await?;
-            test_cross_namespace_push(vm, &user_a, pass_a, &user_b, pass_b).await?;
-            test_visibility_permissions(vm, &user_a, pass_a, &user_b, pass_b).await?;
-            test_repo_list_metadata(vm, &user_a, pass_a).await?;
+            test_repo_list_metadata(vm, "admin").await?;
 
             tracing::info!("");
             tracing::info!("=================================================");

@@ -16,8 +16,6 @@ flowchart TD
     args -->|pull| CmdPull[pull::pull]
     args -->|push| CmdPush[push::push]
     args -->|repo| CmdRepo[repo::repo]
-    args -->|login| CmdLogin[login::login]
-    args -->|logout| CmdLogout[logout::logout]
     args -->|run| CmdRun[run::run]
     args -->|copy| CmdCopy[copy::copy]
     args -->|mount| CmdMount[overlayfs::do_mount]
@@ -47,11 +45,7 @@ flowchart TD
     CmdMount --> LinuxMount[overlayfs::linux]
   end
 
-  subgraph "Registry & Auth"
-    CmdLogin --> OAuth[login::oauth::OAuthFlow]
-    OAuth --> GitHub[GitHub OAuth]
-    OAuth --> AuthCfg[config::auth::AuthConfig]
-    CmdLogout --> AuthCfg
+  subgraph "Registry"
     CmdPush --> AuthCfg
     CmdPull --> AuthCfg
     CmdRepo --> AuthCfg
@@ -268,20 +262,20 @@ Push a local OCI image to a distribution server:
 
 ```sh
 # Push image to registry
-rkforge push --url https://your-distribution-server.com --path output/image1 mynamespace/myimage:latest
+rkforge push --url 127.0.0.1:8968 --path output/image1 admin/myimage:latest
 
-# If only one server is configured, you can omit the URL
-rkforge push --path output/image1 mynamespace/myimage:latest
+# The default registry is 127.0.0.1:8968
+rkforge push --path output/image1 myimage:latest
 ```
 
 Pull an image from a distribution server:
 
 ```sh
 # Pull image from registry
-rkforge pull --url https://your-distribution-server.com mynamespace/myimage:latest
+rkforge pull --url 127.0.0.1:8968 admin/myimage:latest
 
-# If only one server is configured, you can omit the URL
-rkforge pull mynamespace/myimage:latest
+# The default registry is 127.0.0.1:8968
+rkforge pull myimage:latest
 ```
 
 #### Important Notes on Image References
@@ -308,58 +302,22 @@ The image reference should only contain the namespace and image name (e.g., `myn
 
 #### Namespace Auto-Completion
 
-If an image reference does not contain a `/` (i.e., no namespace), rkforge automatically prefixes it with `library/`:
+If an image reference does not contain a `/` (i.e., no namespace), rkforge automatically prefixes it with `admin/`:
 
 ```sh
 # These are equivalent:
 rkforge pull nginx:latest
-rkforge pull library/nginx:latest
+rkforge pull admin/nginx:latest
 
 # Similarly for push:
-rkforge push --path output/nginx-latest nginx:latest  # Pushes to library/nginx:latest
+rkforge push --path output/nginx-latest nginx:latest  # Pushes to admin/nginx:latest
 ```
 
-This behavior matches Docker Hub, where official images are stored under the `library/` namespace. To use this feature, create a user named `library` on your distribution server and configure rkforge with that user's credentials.
+This standalone deployment uses a single default `admin` namespace.
 
 ### Authentication
 
-#### GitHub OAuth Login
-
-Login to your distribution server using GitHub OAuth:
-
-```sh
-# Use default auth server (https://libra.tools)
-rkforge login
-
-# Specify auth server explicitly
-rkforge login https://your-auth-server.com
-rkforge login 127.0.0.1:7001
-```
-
-This opens a browser for OAuth authentication and stores credentials locally.  
-`SERVER` is the authentication service address (Web App), not the registry `--url`.
-
-**Note:** OAuth requires the auth service to be configured with `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
-
-#### Manual Token Authentication (Debug Mode)
-
-In debug mode or when GitHub OAuth is not configured, you can manually obtain and configure authentication tokens:
-
-```sh
-# Get authentication token using Basic Auth
-curl -u "username:password" "http://your-distribution-server.com/auth/token"
-
-# Configure the token manually
-# Edit ~/.config/rk8s/rkforge.toml (Linux) or ~/Library/Application Support/rk8s/rkforge.toml (macOS)
-# Add the following:
-# [[entries]]
-# pat = "your-token-here"
-# url = "your-distribution-server.com"
-#
-# # Optional: override image storage root
-# [image]
-# storage = "/data/rkforge"
-```
+Authentication is not required for the standalone distribution server. `push`, `pull`, and `repo` commands work without a local token, and rkforge does not expose login commands in this build.
 
 You can also configure the storage path from CLI:
 
@@ -372,22 +330,6 @@ rkforge config get image.storage
 `~username/...` is not supported. `rkforge config get image.storage` prints the
 resolved effective path (for example, `~/data` is shown as `/home/<user>/data`).
 The same path rules apply when you edit `rkforge.toml` manually.
-
-Tokens expire after a configurable period (default: 1 hour). When a token expires, repeat the token retrieval process and update the configuration file.
-
-### List Repositories
-
-First, login to your distribution server using GitHub OAuth:
-
-```sh
-# Use default auth server
-rkforge login
-
-# Or specify auth server
-rkforge login https://your-auth-server.com
-```
-
-This opens a browser for OAuth authentication and stores credentials locally.
 
 ### List Repositories
 
@@ -421,20 +363,6 @@ Or with a specific server:
 rkforge repo --url https://your-distribution-server.com vis mine/hello-world public
 ```
 
-### Logout
-
-Logout from the distribution server:
-
-```sh
-rkforge logout
-```
-
-Or logout from a specific server:
-
-```sh
-rkforge logout https://your-distribution-server.com
-```
-
 ## rkforge usage
 
 ```sh
@@ -445,8 +373,6 @@ Commands:
   config  Get or set rkforge configuration
   push    Push an image to specific distribution server
   pull    Pull an image from specific distribution server
-  login   Login to distribution server
-  logout  Logout from distribution server
   repo    List and manage repositories
   help    Print this message or the help of the given subcommand(s)
 
@@ -496,29 +422,6 @@ Arguments:
 Options:
       --url <URL>  URL of the distribution server (optional if only one server is configured)
   -h, --help       Print help
-```
-
-#### Login
-```sh
-Usage: rkforge login [OPTIONS] [SERVER]
-
-Arguments:
-  [SERVER]  Auth server URL (e.g. https://libra.tools or http://localhost:7001). When omitted, defaults to https://libra.tools
-
-Options:
-      --skip-tls-verify  Skip TLS certificate verification for HTTPS connections
-  -h, --help  Print help
-```
-
-#### Logout
-```sh
-Usage: rkforge logout [URL]
-
-Arguments:
-  [URL]  URL of the distribution server (optional if only one entry exists)
-
-Options:
-  -h, --help  Print help
 ```
 
 #### Repository Management
@@ -704,9 +607,8 @@ The target release shape is:
 | Image building             | ✅     |
 | Image push/pull            | ✅     |
 | libfuse integration        | ✅     |
-| Registry authentication    | ✅     |
+| Standalone no-auth registry | ✅     |
 | Repository management      | ✅     |
-| GitHub OAuth login         | ✅     |
 | Multi-server support       | ✅     |
 | Cross-platform             | ❌     |
 

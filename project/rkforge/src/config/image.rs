@@ -8,7 +8,7 @@ use std::{fs, io::Write};
 pub static CONFIG: Lazy<Config> =
     Lazy::new(|| Config::new().expect("Failed to initialize configuration"));
 
-static REGISTRY: &str = "47.79.87.161:8968";
+static REGISTRY: &str = "127.0.0.1:8968";
 static ROOT_PATH: &str = "/var/lib/rkforge";
 
 fn current_user_is_root() -> bool {

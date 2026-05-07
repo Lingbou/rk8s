@@ -29,11 +29,6 @@ pub fn create_router(state: Arc<AppState>) -> Router<()> {
         .nest("/v2", v2::create_v2_router(state.clone()))
         .nest("/api/v1", custom_v1_router(state.clone()))
         .route("/auth/token", get(auth));
-
-    #[cfg(debug_assertions)]
-    {
-        router = router.nest("/debug", debug_router(state.clone()));
-    }
     router.with_state(state)
 }
 
@@ -66,16 +61,6 @@ fn v1_router_with_auth(state: Arc<AppState>) -> Router<Arc<AppState>> {
                     populate_oci_claims,
                 )),
         )
-}
-
-#[cfg(debug_assertions)]
-fn debug_router(state: Arc<AppState>) -> Router<Arc<AppState>> {
-    use crate::service::auth::create_user;
-    use axum::routing::post;
-
-    Router::new()
-        .route("/users", post(create_user))
-        .with_state(state)
 }
 
 pub enum AuthHeader {

@@ -27,8 +27,7 @@ pub struct Config {
 
     pub jwt_secret: String,
     pub jwt_lifetime_secs: i64,
-    pub auth_api_url: String,
-    pub internal_verify_token: String,
+    pub default_user: String,
 
     pub s3_config: Option<S3Config>,
 }
@@ -138,18 +137,10 @@ pub async fn validate_config(args: &Args) -> Config {
     let jwt_lifetime_secs =
         must_set("JWT_LIFETIME_SECONDS", &mut validation_errors, Some(3600)).unwrap();
 
-    let internal_verify_token = match args
-        .internal_verify_token
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-    {
-        Some(token) => token.to_string(),
-        None => {
-            validation_errors.push("INTERNAL_VERIFY_TOKEN must be set".into());
-            String::new()
-        }
-    };
+    let default_user = args.default_user.trim().to_ascii_lowercase();
+    if default_user.is_empty() {
+        validation_errors.push("OCI_REGISTRY_DEFAULT_USER must not be empty".into());
+    }
 
     let db_url = match std::env::var("DATABASE_URL") {
         Ok(url) => url,
@@ -182,8 +173,7 @@ pub async fn validate_config(args: &Args) -> Config {
         db_url,
         jwt_secret,
         jwt_lifetime_secs,
-        auth_api_url: args.auth_api_url.clone(),
-        internal_verify_token,
+        default_user,
         s3_config,
     }
 }

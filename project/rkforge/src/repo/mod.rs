@@ -1,7 +1,6 @@
 mod types;
 
 use crate::config::auth::AuthConfig;
-use crate::config::auth::AuthEntry;
 use crate::registry::{
     RegistryScheme, api_url, effective_skip_tls_verify, parse_registry_host_arg,
 };
@@ -41,26 +40,41 @@ enum RepoSubArgs {
 
 pub fn repo(args: RepoArgs) -> anyhow::Result<()> {
     let auth_config = AuthConfig::load()?;
-    let entry = auth_config.resolve_entry(args.url.as_ref())?.clone();
-    let scheme = auth_config.registry_scheme(&entry.url);
-    let skip_tls_verify = effective_skip_tls_verify(args.skip_tls_verify, scheme, &entry.url);
+    let url = auth_config.resolve_url(args.url.as_ref())?;
+    let pat = auth_config
+        .find_entry_by_url(&url)
+        .ok()
+        .map(|entry| entry.pat.clone());
+    let scheme = auth_config.registry_scheme(&url);
+    let skip_tls_verify = effective_skip_tls_verify(args.skip_tls_verify, scheme, &url);
     block_on(async move {
         match args.sub {
-            RepoSubArgs::List => handle_repo_list(&entry, scheme, skip_tls_verify).await,
+            RepoSubArgs::List => {
+                handle_repo_list(&url, pat.as_deref(), scheme, skip_tls_verify).await
+            }
             RepoSubArgs::Vis { name, visibility } => {
-                handle_repo_visibility(&entry, scheme, skip_tls_verify, name, visibility).await
+                handle_repo_visibility(
+                    &url,
+                    pat.as_deref(),
+                    scheme,
+                    skip_tls_verify,
+                    name,
+                    visibility,
+                )
+                .await
             }
         }
     })?
 }
 
 async fn handle_repo_list(
-    entry: &AuthEntry,
+    registry: &str,
+    pat: Option<&str>,
     scheme: RegistryScheme,
     skip_tls_verify: bool,
 ) -> anyhow::Result<()> {
-    let client = client_with_authentication(&entry.pat, skip_tls_verify).await?;
-    let url = api_url(scheme, &entry.url, "api/v1/repo");
+    let client = client_with_optional_authentication(pat, skip_tls_verify).await?;
+    let url = api_url(scheme, registry, "api/v1/repo");
 
     let res = send_and_handle_unexpected(client.get(&url))
         .await?
@@ -107,16 +121,17 @@ fn format_local_timestamp(value: Option<DateTime<Utc>>) -> String {
 }
 
 async fn handle_repo_visibility(
-    entry: &AuthEntry,
+    registry: &str,
+    pat: Option<&str>,
     scheme: RegistryScheme,
     skip_tls_verify: bool,
     name: impl AsRef<str>,
     visibility: Visibility,
 ) -> anyhow::Result<()> {
-    let client = client_with_authentication(&entry.pat, skip_tls_verify).await?;
+    let client = client_with_optional_authentication(pat, skip_tls_verify).await?;
     let url = api_url(
         scheme,
-        &entry.url,
+        registry,
         format!("api/v1/{}/visibility", name.as_ref()),
     );
 
@@ -131,8 +146,17 @@ pub async fn client_with_authentication(
     pat: impl AsRef<str>,
     skip_tls_verify: bool,
 ) -> anyhow::Result<reqwest::Client> {
+    client_with_optional_authentication(Some(pat.as_ref()), skip_tls_verify).await
+}
+
+pub async fn client_with_optional_authentication(
+    pat: Option<&str>,
+    skip_tls_verify: bool,
+) -> anyhow::Result<reqwest::Client> {
     let mut headers = HeaderMap::new();
-    headers.insert("Authorization", format!("Bearer {}", pat.as_ref()).parse()?);
+    if let Some(pat) = pat {
+        headers.insert("Authorization", format!("Bearer {}", pat).parse()?);
+    }
 
     Ok(reqwest::Client::builder()
         .default_headers(headers)

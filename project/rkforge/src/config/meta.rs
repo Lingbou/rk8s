@@ -8,7 +8,7 @@ use std::collections::HashMap;
 /// It records the maps from image reference with tags to its manifest path.
 ///
 /// `(e,g.)
-/// "library/ubuntu.latest" = "sha256:4c07c..."`
+/// "admin/ubuntu.latest" = "sha256:4c07c..."`
 #[derive(Serialize, Deserialize, Default)]
 pub struct Repositories {
     repositories: HashMap<String, String>,

@@ -1,6 +1,5 @@
 use crate::config::Config;
 use crate::domain::repo::{PgRepoRepository, RepoRepository};
-use crate::domain::user::{PgUserRepository, UserRepository};
 use crate::storage::Storage;
 use crate::storage::driver::filesystem::FilesystemStorage;
 use crate::storage::driver::s3::S3Storage;
@@ -19,10 +18,8 @@ pub struct UploadSession {
 pub struct AppState {
     pub sessions: Arc<RwLock<HashMap<String, UploadSession>>>,
     pub storage: Arc<dyn Storage>,
-    pub user_storage: Arc<dyn UserRepository>,
     pub repo_storage: Arc<dyn RepoRepository>,
     pub config: Arc<Config>,
-    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -47,8 +44,6 @@ impl AppState {
             sessions: Arc::new(RwLock::new(HashMap::new())),
             storage: storage_backend,
             config: Arc::new(config),
-            http_client: reqwest::Client::new(),
-            user_storage: Arc::new(PgUserRepository::new(pool.clone())),
             repo_storage: Arc::new(PgRepoRepository::new(pool)),
         })
     }

@@ -1,324 +1,65 @@
 use crate::api::AuthHeader;
-use crate::error::{AppError, InternalError, OciError};
+use crate::error::AppError;
 use crate::utils::jwt::Claims;
 use crate::utils::repo_identifier::identifier_from_full_name;
 use crate::utils::state::AppState;
 use axum::extract::{Request, State};
-use axum::http::{Method, StatusCode};
+use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::IntoResponse;
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Serialize)]
-struct VerifyRequest {
-    token: String,
-    namespace: Option<String>,
-    repository: Option<String>,
-    action: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct VerifyResponse {
-    valid: bool,
-    #[serde(default)]
-    permissions: Vec<String>,
-    #[serde(default)]
-    user: Option<VerifyUser>,
-    #[serde(default)]
-    error: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct VerifyUser {
-    username: String,
-}
-
-fn claims_can_access_namespace(claims: &Claims, namespace: &str) -> bool {
-    claims.sub.eq_ignore_ascii_case(namespace)
-}
-
-fn authorize_verified_claims(
-    claims: &Claims,
-    namespace: &str,
-    action: &str,
-) -> Result<(), AppError> {
-    if !matches!(action, "push" | "pull") {
-        return Err(OciError::Forbidden("unsupported_action".to_string()).into());
-    }
-
-    if !claims_can_access_namespace(claims, namespace) {
-        return Err(OciError::Forbidden("namespace_mismatch".to_string()).into());
-    }
-
-    Ok(())
-}
-
-async fn verify_with_web_app(
-    state: &Arc<AppState>,
-    token: String,
-    namespace: Option<String>,
-    repository: Option<String>,
-    action: Option<String>,
-) -> Result<Claims, AppError> {
-    let requested_action = action.clone();
-
-    let resp = state
-        .http_client
-        .post(&state.config.auth_api_url)
-        .header(
-            "X-Registry-Internal-Token",
-            &state.config.internal_verify_token,
-        )
-        .json(&VerifyRequest {
-            token,
-            namespace,
-            repository,
-            action,
-        })
-        .send()
-        .await
-        .map_err(|e| {
-            tracing::error!("Failed to send verify request: {}", e);
-            InternalError::Others("authentication service unavailable".to_string())
-        })?;
-
-    let status = resp.status();
-    let verify_res: VerifyResponse = resp.json().await.map_err(|e| {
-        tracing::error!("Failed to parse verify response: {}", e);
-        InternalError::Others("invalid verify response payload".to_string())
-    })?;
-
-    let verify_error_msg = verify_res
-        .error
-        .clone()
-        .unwrap_or_else(|| "verify_failed".to_string());
-
-    match status {
-        StatusCode::OK => {
-            if !verify_res.valid {
-                return Err(OciError::Unauthorized {
-                    msg: verify_error_msg,
-                    auth_url: Some(state.config.registry_url.clone()),
-                }
-                .into());
-            }
-        }
-        StatusCode::UNAUTHORIZED => {
-            if matches!(
-                verify_res.error.as_deref(),
-                Some("missing_internal_token" | "invalid_internal_token")
-            ) {
-                return Err(InternalError::Others(
-                    "authentication service rejected internal credentials".to_string(),
-                )
-                .into());
-            }
-            return Err(OciError::Unauthorized {
-                msg: verify_error_msg,
-                auth_url: Some(state.config.registry_url.clone()),
-            }
-            .into());
-        }
-        StatusCode::FORBIDDEN => {
-            return Err(OciError::Forbidden(verify_error_msg).into());
-        }
-        s if s.is_server_error() => {
-            return Err(InternalError::Others(format!(
-                "authentication service internal error: {}",
-                verify_error_msg
-            ))
-            .into());
-        }
-        other => {
-            return Err(InternalError::Others(format!(
-                "unexpected verify status: {} ({})",
-                other, verify_error_msg
-            ))
-            .into());
-        }
-    }
-
-    if let Some(action) = requested_action.as_deref()
-        && !verify_res.permissions.iter().any(|p| p == action)
-    {
-        return Err(OciError::Forbidden(format!("permission denied for action: {action}")).into());
-    }
-
-    let Some(user) = verify_res.user else {
-        return Err(InternalError::Others(
-            "verify contract violation: missing user on successful response".to_string(),
-        )
-        .into());
-    };
-
-    if user.username.trim().is_empty() {
-        return Err(
-            InternalError::Others("verify contract violation: empty username".to_string()).into(),
-        );
-    }
-
-    Ok(Claims {
-        sub: user.username,
-        exp: 0, // Not strictly needed for the internal claims extension if verified by web
-        iss: Some("libra.tools".to_string()),
+fn admin_claims(state: &AppState) -> Claims {
+    Claims {
+        sub: state.config.default_user.clone(),
+        exp: 0,
+        iss: None,
         iat: None,
-    })
-}
-
-fn is_anonymous_subject(subject: &str) -> bool {
-    subject.eq_ignore_ascii_case("anonymous")
+    }
 }
 
 pub async fn require_authentication(
     State(state): State<Arc<AppState>>,
-    auth: Option<AuthHeader>,
+    _auth: Option<AuthHeader>,
     mut req: Request,
     next: Next,
 ) -> Result<impl IntoResponse, AppError> {
-    let token = match auth {
-        Some(AuthHeader::Bearer(bearer)) => bearer.token().to_string(),
-        _ => {
-            return Err(OciError::Unauthorized {
-                msg: "Missing or invalid authorization header".to_string(),
-                auth_url: Some(state.config.registry_url.clone()),
-            }
-            .into());
-        }
-    };
-
-    let claims = verify_with_web_app(&state, token, None, None, None).await?;
-    req.extensions_mut().insert(claims);
+    req.extensions_mut().insert(admin_claims(&state));
     Ok(next.run(req).await)
 }
 
 pub async fn populate_oci_claims(
     State(state): State<Arc<AppState>>,
-    auth: Option<AuthHeader>,
+    _auth: Option<AuthHeader>,
     mut req: Request,
     next: Next,
 ) -> Result<impl IntoResponse, AppError> {
-    let token = match auth {
-        Some(AuthHeader::Bearer(bearer)) => Some(bearer.token().to_string()),
-        _ => None,
-    };
-
-    let claims = if let Some(t) = token {
-        Some(verify_with_web_app(&state, t, None, None, None).await)
-    } else {
-        None
-    };
-
-    match *req.method() {
-        Method::GET | Method::HEAD => {
-            if let Some(Ok(claims)) = claims {
-                req.extensions_mut().insert(claims);
-            }
-        }
-        Method::POST | Method::PUT | Method::PATCH | Method::DELETE => {
-            let claims = match claims {
-                Some(Ok(claims)) => claims,
-                Some(Err(err)) => return Err(err),
-                None => {
-                    return Err(OciError::Unauthorized {
-                        msg: "unauthorized".to_string(),
-                        auth_url: Some(state.config.registry_url.clone()),
-                    }
-                    .into());
-                }
-            };
-            req.extensions_mut().insert(claims);
-        }
-        _ => unreachable!(),
-    }
+    req.extensions_mut().insert(admin_claims(&state));
     Ok(next.run(req).await)
 }
 
 pub async fn authorize_repository_access(
-    State(state): State<Arc<AppState>>,
-    auth: Option<AuthHeader>,
+    State(_state): State<Arc<AppState>>,
+    _auth: Option<AuthHeader>,
     mut req: Request,
     next: Next,
 ) -> Result<impl IntoResponse, AppError> {
-    let identifier = extract_full_repo_name(req.uri().path());
-    if identifier.is_none() {
+    let Some(full_name) = extract_full_repo_name(req.uri().path()) else {
         return Ok(StatusCode::NOT_FOUND.into_response());
-    }
+    };
 
-    let identifier = identifier_from_full_name(identifier.unwrap());
-    let namespace = &identifier.namespace;
-    let existing_claims = req.extensions().get::<Claims>().cloned();
-    match *req.method() {
-        // for read, we can read others' public repos.
-        Method::GET | Method::HEAD => {
-            if let Ok(repo) = state
-                .repo_storage
-                .query_repo_by_identifier(&identifier)
-                .await
-                && !repo.is_public
-            {
-                if let Some(claims) = existing_claims.as_ref() {
-                    authorize_verified_claims(claims, namespace, "pull")?;
-                } else {
-                    let token = match auth.as_ref() {
-                        Some(AuthHeader::Bearer(bearer)) => bearer.token().to_string(),
-                        _ => {
-                            return Err(OciError::Unauthorized {
-                                msg: "unauthorized".to_string(),
-                                auth_url: Some(state.config.registry_url.clone()),
-                            }
-                            .into());
-                        }
-                    };
-
-                    let _claims = verify_with_web_app(
-                        &state,
-                        token,
-                        Some(namespace.clone()),
-                        Some(identifier.name.clone()),
-                        Some("pull".to_string()),
-                    )
-                    .await?;
-                }
-            }
-        }
-        // for write, we cannot write others' all repos.
-        Method::POST | Method::PUT | Method::PATCH | Method::DELETE => {
-            if let Some(claims) = existing_claims.as_ref() {
-                // `populate_oci_claims` already validated the token with the web app.
-                // Reuse those claims here so chunked uploads do not re-verify every
-                // PATCH/PUT request against the Next.js app.
-                authorize_verified_claims(claims, namespace, "push")?;
-            } else {
-                let token = match auth.as_ref() {
-                    Some(AuthHeader::Bearer(bearer)) => bearer.token().to_string(),
-                    _ => {
-                        return Err(OciError::Unauthorized {
-                            msg: "unauthorized".to_string(),
-                            auth_url: Some(state.config.registry_url.clone()),
-                        }
-                        .into());
-                    }
-                };
-
-                let _claims = verify_with_web_app(
-                    &state,
-                    token,
-                    Some(namespace.clone()),
-                    Some(identifier.name.clone()),
-                    Some("push".to_string()),
-                )
-                .await?;
-            }
-        }
-        _ => unreachable!(),
-    }
-    req.extensions_mut().insert(identifier);
+    req.extensions_mut()
+        .insert(identifier_from_full_name(full_name));
     Ok(next.run(req).await)
 }
 
 fn extract_full_repo_name(url: &str) -> Option<String> {
-    let segments: Vec<&str> = url.split("/").filter(|s| !s.is_empty()).collect();
+    let mut segments: Vec<&str> = url.split("/").filter(|s| !s.is_empty()).collect();
+    if segments.first() == Some(&"v2") {
+        segments.remove(0);
+    } else if segments.as_slice().starts_with(&["api", "v1"]) {
+        segments.drain(..2);
+    }
     match segments.as_slice() {
         // tail: /{name}/manifests/{reference}
         [name @ .., "manifests", _reference] if !name.is_empty() => Some(name.join("/")),
@@ -342,40 +83,18 @@ fn extract_full_repo_name(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        Claims, authorize_verified_claims, claims_can_access_namespace, is_anonymous_subject,
-    };
+    use super::extract_full_repo_name;
 
     #[test]
-    fn anonymous_subject_match_is_case_insensitive() {
-        assert!(is_anonymous_subject("anonymous"));
-        assert!(is_anonymous_subject("Anonymous"));
-        assert!(!is_anonymous_subject("lingbou"));
+    fn extract_repo_name_from_manifest_path() {
+        assert_eq!(
+            extract_full_repo_name("/v2/admin/app/manifests/latest"),
+            Some("admin/app".to_string())
+        );
     }
 
     #[test]
-    fn claims_namespace_match_is_case_insensitive() {
-        let claims = Claims {
-            sub: "LingBou".to_string(),
-            exp: 0,
-            iss: None,
-            iat: None,
-        };
-
-        assert!(claims_can_access_namespace(&claims, "lingbou"));
-        assert!(claims_can_access_namespace(&claims, "LINGBOU"));
-        assert!(!claims_can_access_namespace(&claims, "someone-else"));
-    }
-
-    #[test]
-    fn authorize_verified_claims_rejects_namespace_mismatch() {
-        let claims = Claims {
-            sub: "lingbou".to_string(),
-            exp: 0,
-            iss: None,
-            iat: None,
-        };
-
-        assert!(authorize_verified_claims(&claims, "someone-else", "push").is_err());
+    fn extract_repo_name_rejects_unknown_path() {
+        assert_eq!(extract_full_repo_name("/v2/"), None);
     }
 }

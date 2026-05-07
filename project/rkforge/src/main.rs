@@ -9,8 +9,6 @@ mod config;
 mod copy;
 mod image;
 mod images;
-mod login;
-mod logout;
 mod oci_spec;
 mod overlayfs;
 mod pod_task;
@@ -105,8 +103,6 @@ fn main() -> Result<()> {
         Commands::Images(args) => images::list_images(args),
         Commands::Inspect(args) => images::inspect_image(args),
         Commands::Load(args) => images::load_image(args),
-        Commands::Login(args) => login::login(args),
-        Commands::Logout(args) => logout::logout(args),
         Commands::Mount(args) => overlayfs::do_mount(args),
         Commands::Pod(cmd) => pod::pod_execute(cmd),
         Commands::Ps(args) => container::list_container(args.quiet, args.format),

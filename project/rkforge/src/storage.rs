@@ -47,7 +47,7 @@ pub fn parse_image_ref(
 }
 
 /// Constructs a full image reference by joining a base reference and a new tag. If the base reference does not contain namespace,
-/// it will be expanded to `library/{}`.
+/// it will be expanded to `admin/{image_ref}`.
 ///
 /// This function performs a simple string concatenation. It does not attempt to parse the `image_ref` or replace an existing tag.
 ///
@@ -63,8 +63,13 @@ pub fn parse_image_ref(
 /// # Examples
 ///
 /// ```rust
-/// assert_eq(full_image_ref("ubuntu", Some("latest")), "library/ubuntu:latest"));
-/// assert_eq(full_image_ref("ubuntu:latest", Some("latest"), "library/ubuntu:latest:latest"))
+/// use rkforge::storage::full_image_ref;
+///
+/// assert_eq!(full_image_ref("ubuntu", Some("latest")), "admin/ubuntu:latest");
+/// assert_eq!(
+///     full_image_ref("ubuntu:latest", Some("latest")),
+///     "admin/ubuntu:latest:latest"
+/// );
 /// ```
 pub fn full_image_ref(image_ref: impl AsRef<str>, tag: Option<impl AsRef<str>>) -> String {
     let image_ref = image_ref.as_ref();
@@ -72,7 +77,7 @@ pub fn full_image_ref(image_ref: impl AsRef<str>, tag: Option<impl AsRef<str>>) 
     let image_ref = if image_ref.contains("/") {
         image_ref.to_string()
     } else {
-        format!("library/{image_ref}")
+        format!("admin/{image_ref}")
     };
 
     format!(

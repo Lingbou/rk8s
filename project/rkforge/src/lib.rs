@@ -4,8 +4,6 @@ mod compressor;
 pub mod config;
 mod image;
 pub mod images;
-mod login;
-mod logout;
 
 mod oci_spec;
 pub mod overlayfs;

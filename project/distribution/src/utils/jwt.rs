@@ -26,11 +26,7 @@ pub fn decode(secret: impl AsRef<str>, token: impl AsRef<str>) -> Result<Claims,
     Ok(jsonwebtoken::decode::<Claims>(
         token.as_ref(),
         &DecodingKey::from_secret(secret.as_ref().as_bytes()),
-        &{
-            let mut validation = Validation::default();
-            validation.set_issuer(&["libra.tools"]);
-            validation
-        },
+        &Validation::default(),
     )
     .map_err(|e| OciError::Unauthorized {
         msg: e.to_string(),

@@ -1,6 +1,6 @@
 # Distribution
 
-A lite implementation of the OCI Distribution Spec in Rust, with added support for user management and authentication.
+A lite standalone implementation of the OCI Distribution Spec in Rust. This fork runs without registry authentication and treats all clients as the `admin` user.
 
 ## Configuration
 
@@ -35,10 +35,8 @@ JWT_SECRET="secret"
 # JWT token lifetime in seconds
 JWT_LIFETIME_SECONDS=3600
 
-# GitHub OAuth Configuration (optional)
-# Required for GitHub OAuth authentication
-# GITHUB_CLIENT_ID="your_github_client_id"
-# GITHUB_CLIENT_SECRET="your_github_client_secret"
+# Default user injected for compatibility token responses
+OCI_REGISTRY_DEFAULT_USER=admin
 
 # Log level
 RUST_LOG="info"
@@ -83,17 +81,13 @@ POSTGRES_DB=postgres
 # --- Security Configuration ---
 JWT_SECRET="secret"
 JWT_LIFETIME_SECONDS=3600
-
-# GitHub OAuth Configuration (optional)
-# Required for GitHub OAuth authentication
-# GITHUB_CLIENT_ID="your_github_client_id"
-# GITHUB_CLIENT_SECRET="your_github_client_secret"
+OCI_REGISTRY_DEFAULT_USER=admin
 
 # Log level
 RUST_LOG="info"
 ```
 
-**Security Note**: For production environments, `JWT_SECRET`, `POSTGRES_PASSWORD`, `GITHUB_CLIENT_ID`, and `GITHUB_CLIENT_SECRET` must be protected and set to secure values. Generate secure random strings for JWT_SECRET and obtain GitHub OAuth credentials from your GitHub application settings.
+**Security Note**: This standalone build has no registry authentication. Deploy it only on a trusted single-machine or private-network environment.
 
 ## Quick Start
 
@@ -138,47 +132,15 @@ The registry will be running and accessible on `http://127.0.0.1:8968`.
 
 ## User and Repository Management
 
-This registry extends the OCI specification with a user management and authentication layer.
+This registry extends the OCI specification with repository metadata APIs. Authentication is disabled.
 
-### 1. User Registration
-
-#### Debug Mode Registration (Development Only)
-
-For development purposes, you can create users directly via the debug API (only available when compiled with debug assertions):
-
-*   **Endpoint**: `POST /debug/users`
-*   **Request Body**:
-    ```json
-    {
-        "username": "myuser",
-        "password": "mypassword"
-    }
-    ```
-*   **Response**: `201 Created` on success.
-
-#### OAuth Registration (GitHub)
-
-The registry supports OAuth authentication through GitHub. To use this feature, you must configure GitHub OAuth credentials in your environment variables.
-
-*   **Endpoint**: `GET /api/v1/auth/github/callback?code=<oauth_code>`
-*   **Purpose**: Handle GitHub OAuth callback and create/authenticate users
-*   **Prerequisites**: Set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` environment variables
-*   **Response**: Returns a Personal Access Token (PAT)
-    ```json
-    {
-      "pat": "ey..."
-    }
-    ```
-
-### 2. Authentication
-
-The registry uses JWT for authenticating API requests. To obtain a token, use the Docker-compatible `/auth/token` endpoint with HTTP Basic Authentication.
+### 1. Compatibility Token
 
 *   **Endpoint**: `GET /auth/token`
-*   **Authentication**: HTTP Basic Auth (use the username and password you registered).
+*   **Authentication**: None. Basic Auth, if sent by a client, is ignored.
 *   **Example using curl**:
     ```bash
-    curl -u "myuser:mypassword" "http://127.0.0.1:8968/auth/token"
+    curl "http://127.0.0.1:8968/auth/token"
     ```
 *   **Response**: A JSON object containing the JWT.
     ```json
@@ -189,22 +151,22 @@ The registry uses JWT for authenticating API requests. To obtain a token, use th
       "issued_at": "2025-09-17T..."
     }
     ```
-This token should be used as a Bearer token for subsequent requests to the OCI API (e.g., `docker login`).
+The token is provided only for Docker/OCI client compatibility. Registry endpoints also work without it.
 
-### 3. Repository Management
+### 2. Repository Management
 
 #### List Visible Repositories
 
-List all repositories visible to the authenticated user:
+List all repositories:
 
 *   **Endpoint**: `GET /api/v1/repo`
-*   **Authentication**: Bearer Token (JWT from `/auth/token` endpoint)
+*   **Authentication**: None
 *   **Response**: 
     ```json
     {
       "data": [
         {
-          "namespace": "myuser",
+          "namespace": "admin",
           "name": "myrepo",
           "is_public": true,
           "tags": ["latest", "v1"],
@@ -218,10 +180,10 @@ List all repositories visible to the authenticated user:
 
 #### Change Repository Visibility
 
-Repositories can be either `public` (readable by anyone) or `private` (readable only by authenticated users, writable by owner).
+Repositories can still store a `public`/`private` flag for UI metadata, but the flag is not used for access control in this build.
 
 *   **Endpoint**: `PUT /api/v1/<namespace>/<repo>/visibility`
-*   **Authentication**: Bearer Token (using the JWT from the `/auth/token` endpoint).
+*   **Authentication**: None
 *   **Request Body**:
     ```json
     {
@@ -330,7 +292,7 @@ The tests will:
 - Create a Debian VM
 - Install and configure PostgreSQL
 - Upload and start the distribution service
-- Run permission tests (anonymous user, cross-namespace push, public/private repository access)
+- Verify no-auth blob upload and repository metadata behavior for the default `admin` namespace
 
 **Note**: The first run may take longer as it downloads the VM image. Subsequent runs will be faster.
 

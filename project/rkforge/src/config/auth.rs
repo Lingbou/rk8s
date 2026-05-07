@@ -182,38 +182,6 @@ impl AuthConfig {
         };
         self.entries.iter().all(|entry| entry.url != url)
     }
-
-    pub fn login(pat: impl Into<String>, url: impl Into<String>) -> anyhow::Result<()> {
-        let mut config = RkforgeConfig::load()?;
-        let url = parse_registry_host(url.into())?;
-        let entry = AuthEntry::new(pat, &url);
-        if let Some((idx, _)) = config
-            .entries
-            .iter()
-            .enumerate()
-            .find(|(_, entry)| entry.url == url)
-        {
-            config.entries.remove(idx);
-        }
-
-        config.entries.iter_mut().try_for_each(|entry| {
-            entry.url = parse_registry_host(&entry.url)?;
-            Ok::<(), anyhow::Error>(())
-        })?;
-        config.registry.insecure_registries =
-            normalize_registry_list(config.registry.insecure_registries, "insecure_registries")?;
-        config.entries.push(entry);
-        config.store()
-    }
-
-    pub fn logout(url: impl Into<String>) -> anyhow::Result<()> {
-        let mut config = RkforgeConfig::load()?;
-        let url = parse_registry_host(url.into())?;
-        config.registry.insecure_registries =
-            normalize_registry_list(config.registry.insecure_registries, "insecure_registries")?;
-        config.entries.retain(|entry| entry.url != url);
-        config.store()
-    }
 }
 
 fn normalize_entries(entries: Vec<AuthEntry>) -> anyhow::Result<Vec<AuthEntry>> {

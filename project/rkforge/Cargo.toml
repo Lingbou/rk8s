@@ -68,7 +68,6 @@ reqwest = { workspace = true, features = ["json", "stream"] }
 axum = { workspace = true }
 confy = { workspace = true }
 comfy-table = { workspace = true }
-qrcode = { workspace = true }
 async-trait = { workspace = true }
 futures = { workspace = true }
 iterator-ext = { workspace = true }

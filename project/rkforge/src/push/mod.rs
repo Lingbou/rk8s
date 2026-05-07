@@ -66,7 +66,8 @@ fn push_from_layout_with_tls(
     let parsed_input_ref = image_ref
         .parse::<Reference>()
         .with_context(|| format!("invalid image reference for push: {}", image_ref.as_str()))?;
-    let requested_repo = parsed_input_ref.repository().to_string();
+    let requested_repo =
+        repository_with_default_namespace(&image_ref, parsed_input_ref.repository())?;
 
     let url = match url {
         Some(url) => auth_config.resolve_url(Some(url))?,
@@ -919,6 +920,28 @@ fn has_explicit_registry(raw: &str) -> bool {
     first == "localhost" || first.contains('.') || first.contains(':')
 }
 
+fn raw_repository_without_registry(raw: &str) -> anyhow::Result<String> {
+    let raw_without_digest = raw.split_once('@').map(|(name, _)| name).unwrap_or(raw);
+    let raw_without_registry = if has_explicit_registry(raw_without_digest) {
+        raw_without_digest
+            .split_once('/')
+            .ok_or_else(|| anyhow!("image reference is missing repository path: {raw}"))?
+            .1
+    } else {
+        raw_without_digest
+    };
+    Ok(strip_explicit_tag(raw_without_registry).to_string())
+}
+
+fn repository_with_default_namespace(raw: &str, parsed_repository: &str) -> anyhow::Result<String> {
+    let raw_repository = raw_repository_without_registry(raw)?;
+    if raw_repository.contains('/') {
+        Ok(parsed_repository.to_string())
+    } else {
+        Ok(format!("admin/{raw_repository}"))
+    }
+}
+
 fn strip_explicit_tag(raw: &str) -> &str {
     let raw_without_digest = raw.split_once('@').map(|(name, _)| name).unwrap_or(raw);
     if has_explicit_tag(raw)
@@ -936,7 +959,8 @@ mod tests {
 
     use super::{
         BlobUploadStrategy, blob_upload_strategy, has_explicit_registry, has_explicit_tag,
-        parse_uploaded_from_range, should_include_digest, strip_explicit_tag,
+        parse_uploaded_from_range, repository_with_default_namespace, should_include_digest,
+        strip_explicit_tag,
     };
 
     #[test]
@@ -1005,6 +1029,34 @@ mod tests {
         let normalized = format!("{}:{}", parsed.repository(), parsed.tag().unwrap());
         let target = parse_image_ref(parsed.registry(), normalized, None::<String>).unwrap();
         assert_eq!(target.whole(), "ghcr.io/acme/app:v1");
+    }
+
+    #[test]
+    fn test_push_repository_defaults_to_admin_namespace() {
+        let bare = "nginx:latest"
+            .parse::<oci_spec::distribution::Reference>()
+            .unwrap();
+        assert_eq!(
+            repository_with_default_namespace("nginx:latest", bare.repository()).unwrap(),
+            "admin/nginx"
+        );
+
+        let local = "localhost:5000/nginx:latest"
+            .parse::<oci_spec::distribution::Reference>()
+            .unwrap();
+        assert_eq!(
+            repository_with_default_namespace("localhost:5000/nginx:latest", local.repository())
+                .unwrap(),
+            "admin/nginx"
+        );
+
+        let namespaced = "team/app:v1"
+            .parse::<oci_spec::distribution::Reference>()
+            .unwrap();
+        assert_eq!(
+            repository_with_default_namespace("team/app:v1", namespaced.repository()).unwrap(),
+            "team/app"
+        );
     }
 
     #[test]

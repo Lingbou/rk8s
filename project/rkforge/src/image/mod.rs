@@ -521,6 +521,7 @@ struct ParsedTag {
 }
 
 fn has_explicit_tag(raw: &str) -> bool {
+    let raw = raw.split_once('@').map(|(name, _)| name).unwrap_or(raw);
     let last_colon = raw.rfind(':');
     let last_slash = raw.rfind('/');
     match (last_colon, last_slash) {
@@ -528,6 +529,15 @@ fn has_explicit_tag(raw: &str) -> bool {
         (Some(_), None) => true,
         _ => false,
     }
+}
+
+fn has_explicit_registry(raw: &str) -> bool {
+    let raw_without_digest = raw.split_once('@').map(|(name, _)| name).unwrap_or(raw);
+    let raw_without_tag = strip_tag(raw_without_digest);
+    let Some((first, _rest)) = raw_without_tag.split_once('/') else {
+        return false;
+    };
+    first == "localhost" || first.contains('.') || first.contains(':')
 }
 
 fn parse_tag(raw: &str) -> Result<ParsedTag> {
@@ -542,7 +552,7 @@ fn parse_tag(raw: &str) -> Result<ParsedTag> {
         .parse::<Reference>()
         .with_context(|| format!("invalid -t/--tag image reference: `{raw}`"))?;
 
-    let repository = reference.repository().to_string();
+    let repository = repository_with_default_namespace(raw, reference.repository());
     let has_explicit_tag = has_explicit_tag(raw);
     let explicit_tag = reference.tag().map(|v| v.to_string());
     let ref_name = explicit_tag.unwrap_or_else(|| "latest".to_string());
@@ -556,6 +566,28 @@ fn parse_tag(raw: &str) -> Result<ParsedTag> {
 
 fn parse_tags(tags: &[String]) -> Result<Vec<ParsedTag>> {
     tags.iter().map(|tag| parse_tag(tag)).collect()
+}
+
+fn repository_with_default_namespace(raw: &str, parsed_repository: &str) -> String {
+    let raw_without_registry = if has_explicit_registry(raw) {
+        raw.split_once('/').map(|(_, rest)| rest).unwrap_or(raw)
+    } else {
+        raw
+    };
+    let raw_without_tag = strip_tag(raw_without_registry);
+    if raw_without_tag.contains('/') {
+        parsed_repository.to_string()
+    } else {
+        format!("admin/{raw_without_tag}")
+    }
+}
+
+fn strip_tag(raw: &str) -> &str {
+    if has_explicit_tag(raw) {
+        raw.rsplit_once(':').map(|(name, _)| name).unwrap_or(raw)
+    } else {
+        raw
+    }
 }
 
 fn normalize_output_name(name: &str) -> String {
@@ -802,7 +834,7 @@ mod tests {
 
         assert_eq!(parsed[0].ref_name, "latest");
         assert!(!parsed[0].has_explicit_tag);
-        assert_eq!(parsed[0].repository, "library/nginx");
+        assert_eq!(parsed[0].repository, "admin/nginx");
 
         assert_eq!(parsed[1].ref_name, "v1");
         assert!(parsed[1].has_explicit_tag);

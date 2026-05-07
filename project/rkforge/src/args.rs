@@ -7,7 +7,7 @@ use crate::sandbox::cli::SandboxCommand;
 use crate::sandbox::guest::SandboxGuestInitArgs;
 #[cfg(feature = "sandbox")]
 use crate::sandbox::vm::SandboxShimArgs;
-use crate::{copy, image, images, login, logout, overlayfs, pull, push, repo, run};
+use crate::{copy, image, images, overlayfs, pull, push, repo, run};
 use clap::{ArgAction, Parser, Subcommand};
 
 const RUN_AFTER_HELP: &str = "\
@@ -49,10 +49,6 @@ pub enum Commands {
     Inspect(images::InspectArgs),
     /// Load an image from a tar archive
     Load(images::LoadArgs),
-    /// Login to distribution server
-    Login(login::LoginArgs),
-    /// Logout from distribution server
-    Logout(logout::LogoutArgs),
     #[command(hide = true)]
     Mount(overlayfs::MountArgs),
     /// Pull an image from specific distribution server.

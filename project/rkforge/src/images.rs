@@ -29,7 +29,7 @@ pub struct ImagesArgs {
 /// CLI arguments for the `inspect` command
 #[derive(Parser, Debug)]
 pub struct InspectArgs {
-    /// Image reference (e.g. "ubuntu:latest" or "library/nginx:1.25")
+    /// Image reference (e.g. "ubuntu:latest" or "admin/nginx:1.25")
     #[arg(value_name = "IMAGE_REF")]
     pub image_ref: String,
 }
@@ -852,13 +852,13 @@ mod tests {
 
     #[test]
     fn test_normalize_image_ref_defaults() {
-        assert_eq!(normalize_image_ref("ubuntu"), "library/ubuntu:latest");
+        assert_eq!(normalize_image_ref("ubuntu"), "admin/ubuntu:latest");
         assert_eq!(normalize_image_ref("library/nginx"), "library/nginx:latest");
     }
 
     #[test]
     fn test_normalize_image_ref_keep_tag() {
-        assert_eq!(normalize_image_ref("ubuntu:22.04"), "library/ubuntu:22.04");
+        assert_eq!(normalize_image_ref("ubuntu:22.04"), "admin/ubuntu:22.04");
         assert_eq!(
             normalize_image_ref("library/nginx:1.25"),
             "library/nginx:1.25"

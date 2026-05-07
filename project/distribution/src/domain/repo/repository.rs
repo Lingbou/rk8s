@@ -101,11 +101,10 @@ impl RepoRepository for PgRepoRepository {
             .map_to_internal()
     }
 
-    async fn query_all_visible_repos(&self, namespace: &str) -> Result<Vec<Repo>> {
+    async fn query_all_visible_repos(&self, _namespace: &str) -> Result<Vec<Repo>> {
         Ok(sqlx::query_as::<_, Repo>(
-            "SELECT * FROM repos where is_public = true or namespace = $1",
+            "SELECT * FROM repos ORDER BY last_pushed_at DESC NULLS LAST, namespace ASC, name ASC",
         )
-        .bind(namespace)
         .fetch_all(self.pool.as_ref())
         .await
         .map_to_internal()?)

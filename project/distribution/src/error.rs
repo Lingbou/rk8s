@@ -185,17 +185,11 @@ pub enum InternalError {
     #[error("migration error: {0}")]
     Migration(#[from] sqlx::migrate::MigrateError),
 
-    #[error("Bcrypt error: {0}")]
-    Bcrypt(#[from] bcrypt::BcryptError),
-
     #[error("IO error: {0}")]
     Io(#[from] io::Error),
 
     #[error("Axum error: {0}")]
     Axum(#[from] axum::Error),
-
-    #[error("Reqwest error: {0}")]
-    Reqwest(#[from] reqwest::Error),
 
     #[error("Other error: {0}")]
     Others(String),

@@ -22,26 +22,6 @@ pub enum Commands {
         #[clap(subcommand)]
         sub: GenCommand,
     },
-    /// Login to a container registry via browser authentication
-    Login {
-        /// Auth server URL (e.g. libra.tools or http://localhost:7001)
-        #[arg(default_value = "https://libra.tools")]
-        server: String,
-        /// RKS config file (needed to access vault)
-        #[arg(short, long)]
-        config: PathBuf,
-        /// Skip TLS certificate verification
-        #[arg(long)]
-        skip_tls_verify: bool,
-    },
-    /// Remove stored registry credentials
-    Logout {
-        /// Registry host to remove (e.g. libra.tools)
-        registry: String,
-        /// RKS config file (needed to access vault)
-        #[arg(short, long)]
-        config: PathBuf,
-    },
     /// Manage rks configuration
     Config {
         #[clap(subcommand)]

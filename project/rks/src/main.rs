@@ -5,7 +5,6 @@ mod controllers;
 mod csi;
 mod dns;
 mod internal;
-mod login;
 mod network;
 mod node;
 mod protocol;
@@ -54,26 +53,6 @@ async fn main() -> anyhow::Result<()> {
             handle_start_command().await?;
         }
         Commands::Gen { sub } => sub.handle().await?,
-        Commands::Login {
-            config,
-            server,
-            skip_tls_verify,
-        } => {
-            load_config(config.to_str().unwrap())?;
-            let vault = Vault::open().await?;
-            let (registry, pat, _username) = login::do_login(server, *skip_tls_verify).await?;
-            vault.store_registry_credential(&registry, &pat).await?;
-            println!("Stored credential for registry: {registry}");
-            notify_credential_refresh().await;
-        }
-        Commands::Logout { config, registry } => {
-            load_config(config.to_str().unwrap())?;
-            let vault = Vault::open().await?;
-            let registry = login::normalize_registry_host(registry)?;
-            vault.delete_registry_credential(&registry).await?;
-            println!("Removed credentials for registry: {registry}");
-            notify_credential_refresh().await;
-        }
         Commands::Config { sub } => sub.handle().await?,
     }
 
@@ -432,40 +411,4 @@ async fn register_controllers(
         .register(Arc::new(RwLock::new(job)), workers)
         .await?;
     Ok(())
-}
-
-/// Best-effort notification to the running rks daemon to refresh and push
-/// registry credentials to all connected workers.
-async fn notify_credential_refresh() {
-    let client = match reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(1))
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-    {
-        Ok(client) => client,
-        Err(_) => {
-            println!(
-                "Note: rks daemon not running or unreachable. \
-                 Workers will receive credentials at next registration."
-            );
-            return;
-        }
-    };
-
-    match client
-        .post("http://127.0.0.1:6789/registry/refresh")
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
-            let body = resp.text().await.unwrap_or_default();
-            println!("{body}");
-        }
-        _ => {
-            println!(
-                "Note: rks daemon not running or unreachable. \
-                 Workers will receive credentials at next registration."
-            );
-        }
-    }
 }
